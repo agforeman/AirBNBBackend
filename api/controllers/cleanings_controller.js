@@ -97,11 +97,11 @@ function updatecleanings(req, res){
                    Cleanings.insertMany(cleanings , function(err, docs){
                        console.log(docs);
                    });
-                   res.status(200).json({
-                       message: "Updated cleanings"
-                   });
                });
            });
        }
+    });
+    res.status(200).json({
+        message: "Updated cleanings"
     });
 }
