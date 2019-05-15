@@ -242,8 +242,11 @@ paths:
         - in: query
           name: done
           required: true
-          type: boolean
-          default: false
+          type: string
+          default: "false"
+          enum:
+            - "true"
+            - "false"
       responses:
         "200":
           description: Success

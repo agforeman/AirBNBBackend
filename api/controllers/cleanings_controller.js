@@ -64,7 +64,8 @@ function updatecleaning(req, res) {
                     message: `Pass Boolean argument 'done' in query string.`
                 }).send();
             } else{
-                cleaning.cleaned = req.swagger.params.done.value;
+                let status = req.swagger.params.done.value;
+                cleaning.cleaned = status === "true" ? true : false
                 cleaning.save(function (err){
                     if(err) res.send(err)
 
