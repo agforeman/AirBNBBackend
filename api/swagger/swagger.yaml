@@ -81,6 +81,11 @@ paths:
         required: true
         type: string
         description: The id of the property to get
+      - in: query
+        name: cleanings
+        required: false
+        type: boolean
+        description: return all future cleanings with the properties
     get:
       description: Returns the specified property to the caller
       operationId: getproperty

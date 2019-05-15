@@ -11,7 +11,7 @@
   It is a good idea to list the modules that your application depends on in the package.json in the project root
  */
 var util = require('util');
-
+var ObjectId = require('mongodb').ObjectID;
 var Property = require('./Properties');
 
 /*
@@ -42,32 +42,63 @@ module.exports = {
  */
 function getproperty(req, res) {
     var id = req.swagger.params.id.value;
-    Property.findById(id, function(err, property) {
-        if(err) {
-            if(err.kind === "ObjectId") {
+
+    if (req.swagger.params.cleanings.value === true) {
+        Property.aggregate([
+            {
+                $match: {
+                    _id: ObjectId(id)
+                }
+            },
+            {
+                $lookup: {
+                    from: 'cleanings',
+                    localField: '_id',
+                    foreignField: 'property',
+                    as: 'cleanings'
+                }
+            }], function (err, properties) {
+            if (err) {
                 res.status(404).json({
                     success: false,
-                    message: `No property with id: ${id} in the database!`
+                    message: `Error encountered while trying to find cleanings assigned to properties!`
                 }).send();
             } else {
-                res.send(err);
-            }
-        } else {
-            if(property === null){
-                res.status(404).json({
-                    success: false,
-                    message: `No property with id: ${id} in the database!`
-                });
-            } else{
-                let properties = [property];
                 res.status(200).json({
                     success: true,
-                    size: 1,
+                    size: properties.length,
                     properties: properties
-                });
+                }); 
             }
-        }
-    });
+        });
+    } else {
+        Property.findById(id, function(err, property) {
+            if(err) {
+                if(err.kind === "ObjectId") {
+                    res.status(404).json({
+                        success: false,
+                        message: `No property with id: ${id} in the database!`
+                    }).send();
+                } else {
+                    res.send(err);
+                }
+            } else {
+                if(property === null){
+                    res.status(404).json({
+                        success: false,
+                        message: `No property with id: ${id} in the database!`
+                    });
+                } else{
+                    let properties = [property];
+                    res.status(200).json({
+                        success: true,
+                        size: 1,
+                        properties: properties
+                    });
+                }
+            }
+        });
+    }
 }
 
 function getproperties(req, res) {
