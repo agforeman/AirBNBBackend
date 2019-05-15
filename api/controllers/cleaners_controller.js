@@ -90,7 +90,7 @@ function insertcleaner(req, res) {
     cleaner.save(function (err) {
         if(err) {
             if(err.code === 11000) {
-                return res.status(409).json({success: false, message: 'A cleaner with that id already exists'}).send()
+                return res.status(409).json({success: false, message: 'A cleaner with that id already exists'}).send();
             } else {
                 return res.send(err);
             }
@@ -148,7 +148,7 @@ function deletecleaner(req, res) {
         } else {
             res.status(200).json({
                 success: true,
-                message: 'Successfully deleted'
+                message: `Successfully deleted cleaner ${cleaner.name}`
             })
         }
     });

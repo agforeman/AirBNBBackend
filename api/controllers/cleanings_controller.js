@@ -10,7 +10,6 @@
 
   It is a good idea to list the modules that your application depends on in the package.json in the project root
  */
-var util = require('util');
 const ical = require('ical');
 var Cleaning = require('./Cleanings');
 var Property = require('./Properties');
@@ -38,7 +37,7 @@ Date.prototype.addDays = function(days){
   we specify that in the exports of this module that 'hello' maps to the function named 'hello'
  */
 module.exports = {
-    updatecleanings: updatecleanings, // Load cleanings for all properties
+    updatepropertiescleanings: updatepropertiescleanings, // Load cleanings for all properties
     updatecleaning: updatecleaning,  // Mark cleaning completed
     updatepropertycleanings: updatepropertycleanings, // Load cleanings for single property by id
     getcleanercleanings: getcleanercleanings, // Get list of all cleanings for a cleaner
@@ -61,7 +60,7 @@ function updatecleaning(req, res) {
             if(!req.swagger.params.done.value){
                 res.status(400).json({
                     success: false,
-                    message: `Pass Boolean argument 'done' in query string.`
+                    message: `Pass String argument 'done' in query string.`
                 }).send();
             } else{
                 let status = req.swagger.params.done.value;
@@ -81,62 +80,93 @@ function updatecleaning(req, res) {
     });
 }
 
-function updatecleanings(req, res){
+// Once we have calendar data we create a list of stays
+function get_stays_from_calendar(calendarData){
+    let stays = [];
+    for(let k in calendarData){
+        // Get a list of all stays for this property
+        if (calendarData.hasOwnProperty(k)) {
+            let stay = calendarData[k];
+            if(calendarData[k].type === 'VEVENT') {
+                stays.push(stay);
+            }
+        }
+    }
+    return stays;
+}
+
+// From a list of generated stays create new cleanings for a property
+function generate_cleanings_from_stays(property, stays){
+    let cleanings = [];
+    // For each stay
+    for(let i = 0; i < stays.length; i++){
+        // Get an event which is to say get a stay at the bnb
+        let stay = stays[i];
+        // Get the next event (stay at the bnb)
+        let nextStay = stays[i+1];
+
+        // The cleaning's start will be the end of the stay
+        let start = stay.end;
+        // The cleaning's end will be the start of the next stay or 7 days if no next stay
+        let end = nextStay === undefined ? new Date(stay.end).addDays(DEFAULT_WINDOW) : nextStay.start;
+
+        // Create and load the new cleaning
+        let cleaning = new Cleaning();
+        cleaning.start = new Date(start).toISOString();
+        cleaning.end = new Date(end).toISOString();
+        cleaning.property = ObjectId(property._id);
+        cleaning.cleaner = ObjectId(property.cleaner);
+
+        //console.log(cleaning);
+        if(start.toISOString() >= new Date(Date.now()).toISOString()) {
+            // Only push new cleanings
+            cleanings.push(cleaning);
+        }
+    }
+    return cleanings;
+}
+
+// Given a property parse through its calendar generate cleanings, delete cleanings from db, and add new cleanings from db.
+function update_cleanings_for_property(property) {
+    // First parse the ical file from the url into data.
+    ical.fromURL(property.calendar, {}, function(err, data){
+        // Now get all events from the data (these are stays at the bnb)
+        let events = get_stays_from_calendar(data);
+        // Now create a cleaning from each pair of events
+        let cleanings = generate_cleanings_from_stays(property, events);
+        // Finally update the database
+        // todo: figure out new way to treat cleaings here
+        Cleaning.deleteMany({'property': ObjectId(property._id).toHexString(), 'start': {$gte: new Date(Date.now()).toISOString()}}, function(err, doc){
+            if(err) console.log(err);
+            if(doc) {
+                console.log('Deleting documents ');
+                //console.log(doc)
+            }
+            Cleaning.insertMany(cleanings , function(err, docs){
+                console.log('Updating Future documents');
+                //console.log(docs);
+            });
+        });
+    });
+}
+
+function updatepropertiescleanings(req, res){
+    // Get all properties
     Property.find(function (err, properties) {
-       if(err) res.send(err);
-       for(let i in properties){
-           let property = properties[i];
-
-           let events = [];
-           ical.fromURL(property.calendar, {}, function(err, data){
-               for(let k in data){
-                   // Get a list of all events for this property
-                   if (data.hasOwnProperty(k)) {
-                       let ev = data[k];
-                       if(data[k].type === 'VEVENT') {
-                           events.push(ev);
-                       }
-                   }
-               }
-               // Now create a cleaning from each pair of events
-               let cleanings = [];
-               for(let i = 0; i < events.length; i++){
-                   // Get an event which is to say get a stay at the bnb
-                   let event = events[i];
-                   // Get the next event (stay at the bnb)
-                   let nextEvent = events[i+1];
-                   let start = event.end;
-                   let end = nextEvent === undefined ? new Date(event.end).addDays(DEFAULT_WINDOW) : nextEvent.start;
-
-                   let cleaning = new Cleaning();
-                   cleaning.start = new Date(start).toISOString();
-                   cleaning.end = new Date(end).toISOString();
-                   cleaning.property = ObjectId(property._id);
-                   cleaning.cleaner = ObjectId(property.cleaner);
-
-                   //console.log(cleaning);
-                   if(start.toISOString() >= new Date(Date.now()).toISOString()) {
-                       cleanings.push(cleaning);
-                   }
-               }
-               // Now remove all cleanings in database for this property past today's date
-               let propid  = ObjectId(property._id);
-               Cleaning.deleteMany({'property': ObjectId(property._id).toHexString(), 'start': {$gte: new Date(Date.now()).toISOString()}}, function(err, doc){
-                   if(err) console.log(err);
-                   if(doc) {
-                       console.log('Deleting documents ');
-                       //console.log(doc)
-                   }
-                   Cleaning.insertMany(cleanings , function(err, docs){
-                       console.log('Updating Future documents');
-                       console.log(docs);
-                   });
-               });
-           });
-       }
-       res.status(200).json({
-           message: "Updated cleanings"
-       });
+       // If we get an error send it as the response
+        if(err) {
+            res.send(err);
+        }
+        else {
+            // Go through each property and update the cleanings
+            for(let i in properties){
+                update_cleanings_for_property(properties[i]);
+            }
+            // Send a success message
+            res.status(200).json({
+                message: "Updated cleanings"
+            });
+        }
     });
 }
 
@@ -145,349 +175,121 @@ function updatepropertycleanings(req, res) {
     Property.findById(id, function (err, property) {
         if (err) {
             if (err.kind === "ObjectId") {
+                // If the property is not in the database
                 res.status(404).json({
                     success: false,
                     message: `No property with id: ${id} in the database!`
                 }).send();
             } else {
+                // Unknown error
                 res.send(err);
             }
         } else {
             if (property === null) {
+                // If for whatever reason the property comes back null
                 res.status(404).json({
                     success: false,
                     message: `No property with id: ${id} in the database!`
                 });
             } else {
-                let events = [];
-                ical.fromURL(property.calendar, {}, function (err, data) {
-                    for (let k in data) {
-                        // Get a list of all events for this property
-                        if (data.hasOwnProperty(k)) {
-                            let ev = data[k];
-                            if (data[k].type === 'VEVENT') {
-                                events.push(ev);
-                            }
-                        }
-                    }
-                    // Now create a cleaning from each pair of events
-                    let cleanings = [];
-                    for (let i = 0; i < events.length; i++) {
-                        // Get an event which is to say get a stay at the bnb
-                        let event = events[i];
-                        // Get the next event (stay at the bnb)
-                        let nextEvent = events[i + 1];
-                        let start = event.end;
-                        let end = nextEvent === undefined ? new Date(event.end).addDays(DEFAULT_WINDOW) : nextEvent.start;
-
-                        let cleaning = new Cleaning();
-                        cleaning.start = new Date(start).toISOString();
-                        cleaning.end = new Date(end).toISOString();
-                        cleaning.property = ObjectId(property._id);
-                        cleaning.cleaner = ObjectId(property.cleaner);
-
-                        //console.log(cleaning);
-                        if (start.toISOString() >= new Date(Date.now()).toISOString()) {
-                            cleanings.push(cleaning);
-                        }
-                    }
-                    // Now remove all cleanings in database for this property past today's date
-                    let propid = ObjectId(property._id);
-                    Cleaning.deleteMany({
-                        'property': ObjectId(property._id).toHexString(),
-                        'start': {$gte: new Date(Date.now()).toISOString()}
-                    }, function (err, doc) {
-                        if (err) console.log(err);
-                        if (doc) {
-                            console.log('Deleting documents for this property');
-                            //console.log(doc)
-                        }
-                        Cleaning.insertMany(cleanings, function (err, docs) {
-                            console.log('Updating Future documents');
-                            console.log(docs);
-                        });
-                        res.status(200).json({
-                            message: "Updated cleanings"
-                        });
-                    });
+                // Update the cleanings for the property
+                update_cleanings_for_property(property);
+                res.status(200).json({
+                    message: "Updated cleanings"
                 });
             }
         }
     });
 }
 
-function getcleanercleanings (req, res) {
-    var id = req.swagger.params.id.value;
-    var start = undefined, end = undefined;
-    if (req.swagger.params.start.value !== undefined)
-        start = req.swagger.params.start.value;
-    if (req.swagger.params.end.value !== undefined)
-        end = req.swagger.params.end.value;
-    if (start !== undefined && end !== undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'cleaner': ObjectId(id),
-                    'start': {
-                        $gte: start,
-                        $lt: end
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
-            }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for Cleaner id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else if (start === undefined && end !== undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'cleaner': ObjectId(id),
-                    'start': {
-                        $lt: end
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
-            }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for Cleaner id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                console.log(cleanings);
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else if (start !== undefined && end === undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'cleaner': ObjectId(id),
-                    'start': {
-                        $gte: start
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
-            }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for Cleaner id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else {
-        Cleaning.find({cleaner: ObjectId(id).toHexString()}, function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
-                }).send();
-            } else if (!cleanings.length) {
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings found for Cleaner id: ${id}!`,
-                    cleanings: []
-                }).send();
-            } else {
-                console.log(cleanings);
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
+function isEmpty(obj) {
+    for(var key in obj) {
+        if(obj.hasOwnProperty(key))
+            return false;
     }
+    return true;
+}
+
+function getcleanercleanings (req, res) {
+    let id = req.swagger.params.id.value;
+
+    let match = { "$match": {}};
+    let dates = {};
+    match["$match"].cleaner = ObjectId(id);
+
+    if (req.swagger.params.start.value !== undefined)
+        dates.$gte = req.swagger.params.start.value;
+    if (req.swagger.params.end.value !== undefined)
+        dates.$lt = req.swagger.params.end.value;
+    if (!isEmpty(dates)) 
+        match["$match"].start = dates;
+    
+    Cleaning.aggregate([match,
+        {
+            '$sort': {
+                'start': 1
+            }
+        }
+    ], function (err, cleanings) {
+        if (err) {
+            res.status(404).json({
+                success: false,
+                message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
+            });
+        } else if (cleanings == []){
+            res.status(200).json({
+                success: true,
+                message: `No cleanings for Cleaner id: ${id} within the date range specified.`,
+                cleanings: []
+            });
+        } else {
+            res.status(200).json({
+                success: true,
+                size: cleanings.length,
+                cleanings: cleanings
+            });
+        }
+    });
 }
 
 function getpropertycleanings (req, res) {
     let id = req.swagger.params.id.value;
-    var start = undefined, end = undefined;
+
+    let match = { "$match": {}};
+    let dates = {};
+    match["$match"].property = ObjectId(id);
+
     if (req.swagger.params.start.value !== undefined)
-        start = req.swagger.params.start.value;
+        dates.$gte = req.swagger.params.start.value;
     if (req.swagger.params.end.value !== undefined)
-        end = req.swagger.params.end.value;
-    if (start !== undefined && end !== undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'property': ObjectId(id),
-                    'start': {
-                        $gte: start,
-                        $lt: end
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
+        dates.$lt = req.swagger.params.end.value;
+    if (!isEmpty(dates)) 
+        match["$match"].start = dates;
+    
+    Cleaning.aggregate([match,
+        {
+            '$sort': {
+                'start': 1
             }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to property id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for property id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else if (start === undefined && end !== undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'property': ObjectId(id),
-                    'start': {
-                        $lt: end
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
-            }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to property id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for property id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else if (start !== undefined && end === undefined) {
-        Cleaning.aggregate([
-            {
-                '$match': {
-                    'property': ObjectId(id),
-                    'start': {
-                        $gte: start
-                    }
-                }
-            },
-            {
-                '$sort': {
-                    'start': 1
-                }
-            }
-        ], function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to property id: ${id}!`
-                }).send();
-            } else if (cleanings == []){
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings for property id: ${id} within the date range specified.`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    } else {
-        Cleaning.find({property: ObjectId(id).toHexString()}, function (err, cleanings) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to property id: ${id}!`
-                }).send();
-            } else if (cleanings == []) {
-                res.status(200).json({
-                    success: true,
-                    message: `No cleanings found for property id: ${id}!`,
-                    cleanings: []
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: cleanings.length,
-                    cleanings: cleanings
-                });
-            }
-        });
-    }
+        }
+    ], function (err, cleanings) {
+        if (err) {
+            res.status(404).json({
+                success: false,
+                message: `Error encountered while trying to find cleanings assigned to property id: ${id}!`
+            });
+        } else if (cleanings.length === 0){
+            res.status(200).json({
+                success: true,
+                message: `No cleanings for property id: ${id} within the date range specified.`,
+                cleanings: []
+            });
+        } else {
+            res.status(200).json({
+                success: true,
+                size: cleanings.length,
+                cleanings: cleanings
+            });
+        }
+    });
 }
