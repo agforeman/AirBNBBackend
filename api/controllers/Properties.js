@@ -1,4 +1,5 @@
 var mongoose = require('mongoose');
+var ObjectId = require('mongodb').ObjectID;
 var Schema = mongoose.Schema;
 
 mongoose.Promise = global.Promise;
@@ -12,7 +13,7 @@ var PropertySchema = new Schema({
     city: {type: String, required: true},
     state: {type: String, required: true},
     zip: {type: String, required: true},
-    cleaner: {type: String, required: true},
+    cleaner: {type: ObjectId, required: true},
     calendar: {type: String, required: true}
 });
 

@@ -13,6 +13,9 @@
 var util = require('util');
 var ObjectId = require('mongodb').ObjectID;
 var Property = require('./Properties');
+var cleaners_lookup = require('../helpers/functions').cleaners_lookup;
+var cleanings_lookup = require('../helpers/functions').cleanings_lookup;
+
 
 /*
  Once you 'require' a module you can reference the things that it exports.  These are defined in module.exports.
@@ -42,99 +45,46 @@ module.exports = {
  */
 function getproperty(req, res) {
     var id = req.swagger.params.id.value;
-
-    if (req.swagger.params.cleanings.value === true) {
-        Property.aggregate([
-            {
-                $match: {
-                    _id: ObjectId(id)
-                }
-            },
-            {
-                $lookup: {
-                    from: 'cleanings',
-                    localField: '_id',
-                    foreignField: 'property',
-                    as: 'cleanings'
-                }
-            }], function (err, properties) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to properties!`
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: properties.length,
-                    properties: properties
-                }); 
-            }
-        });
-    } else {
-        Property.findById(id, function(err, property) {
-            if(err) {
-                if(err.kind === "ObjectId") {
-                    res.status(404).json({
-                        success: false,
-                        message: `No property with id: ${id} in the database!`
-                    }).send();
-                } else {
-                    res.send(err);
-                }
-            } else {
-                if(property === null){
-                    res.status(404).json({
-                        success: false,
-                        message: `No property with id: ${id} in the database!`
-                    });
-                } else{
-                    let properties = [property];
-                    res.status(200).json({
-                        success: true,
-                        size: 1,
-                        properties: properties
-                    });
-                }
-            }
-        });
+    let pipeline = [];
+    pipeline.push({$match: {_id: ObjectId(id)}})
+    pipeline.push(cleaners_lookup);
+    
+    if(req.swagger.params.cleanings.value === true) {
+        pipeline.push(cleanings_lookup);
     }
-}
-
-function getproperties(req, res) {
-    if (req.swagger.params.cleanings.value === true) {
-        Property.aggregate([
-            {
-                $lookup: {
-                    from: 'cleanings',
-                    localField: '_id',
-                    foreignField: 'property',
-                    as: 'cleanings'
-                }
-            }], function (err, properties) {
-            if (err) {
-                res.status(404).json({
-                    success: false,
-                    message: `Error encountered while trying to find cleanings assigned to properties!`
-                }).send();
-            } else {
-                res.status(200).json({
-                    success: true,
-                    size: properties.length,
-                    properties: properties
-                }); 
-            }
-        });
-    } else {
-        Property.find(function (err, properties) {
-            if (err) res.send(err);
+    
+    Property.aggregate(pipeline, function (err, properties) {
+        if (err) {
+            res.status(404).json({
+                success: false,
+                message: `Error encountered while trying to find cleanings assigned to properties!`
+            });
+        } else {
             res.status(200).json({
                 success: true,
                 size: properties.length,
                 properties: properties
-            })
-        });
-    }
+            }); 
+        }
+    });
+}
+
+function getproperties(req, res) {
+    let lookup = req.swagger.params.cleanings.value !== true ? [cleaners_lookup] : [cleaners_lookup, cleanings_lookup];
+    Property.aggregate(lookup, function (err, properties) {
+        if (err) {
+            res.status(404).json({
+                success: false,
+                message: `Error encountered while trying to find cleanings assigned to properties!`
+            });
+        } else {
+            res.status(200).json({
+                success: true,
+                size: properties.length,
+                properties: properties
+            }); 
+        }
+    });
 }
 
 function insertproperty(req, res) {
@@ -144,7 +94,7 @@ function insertproperty(req, res) {
     property.city = req.swagger.params.property.value.city;
     property.state = req.swagger.params.property.value.state;
     property.zip = req.swagger.params.property.value.zip;
-    property.cleaner = req.swagger.params.property.value.cleaner;
+    property.cleaner = ObjectId(req.swagger.params.property.value.cleaner);
     property.calendar = req.swagger.params.property.value.calendar;
 
     property.save(function (err, property) {
@@ -183,7 +133,7 @@ function updateproperty(req, res) {
             if (req.swagger.params.property.value.city) property.city = req.swagger.params.property.value.city;
             if (req.swagger.params.property.value.state) property.state = req.swagger.params.property.value.state;
             if (req.swagger.params.property.value.zip) property.zip = req.swagger.params.property.value.zip;
-            if (req.swagger.params.property.value.cleaner) property.cleaner = req.swagger.params.property.value.cleaner;
+            if (req.swagger.params.property.value.cleaner) property.cleaner = ObjectId(req.swagger.params.property.value.cleaner);
             if (req.swagger.params.property.value.calendar) property.calendar = req.swagger.params.property.value.calendar;
 
             property.save(function (err) {
