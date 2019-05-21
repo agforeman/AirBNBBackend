@@ -94,7 +94,18 @@ let cleaners_lookup = {
         localField: 'cleaner',
         foreignField: '_id',
         as: 'cleaners'
-    }
+    },
+    $project: {
+        _id: 1,
+        name: 1,
+        address: 1,
+        city: 1,
+        state: 1,
+        zip: 1,
+        calendar: 1,
+        cleaner: {$arrayElemAt: ['$cleaners', 0]},
+        cleanings: 1
+      }
 };
 
 let cleanings_lookup = {

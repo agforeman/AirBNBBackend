@@ -11,6 +11,7 @@
   It is a good idea to list the modules that your application depends on in the package.json in the project root
  */
 var Cleaning = require('./Cleanings');
+var Cleaners = require('./Cleaners');
 var Property = require('./Properties');
 var isEmpty = require('../helpers/functions').isEmpty;
 var update = require('../helpers/functions').update_cleanings_for_property;
@@ -124,43 +125,151 @@ function updatepropertycleanings(req, res) {
     });
 }
 
+var lookupProperties = {
+    $lookup: {
+        from: 'properties', 
+        localField: '_id', 
+        foreignField: 'cleaner', 
+        as: 'properties'
+    }
+};
+
+var unwindProperties = {
+    $unwind: {
+        path: '$properties', 
+        preserveNullAndEmptyArrays: true
+    }
+};
+
+var lookupCleanings = {
+    $lookup: {
+        from: 'cleanings', 
+        localField: 'properties._id', 
+        foreignField: 'property', 
+        as: 'properties.cleanings'
+    }
+};
+
+var unwindCleanings = {
+    $unwind: {
+        path: '$properties.cleanings',
+        preserveNullAndEmptyArrays: true
+    }
+}
+
+var groupByProperties = {
+    $group: {
+        _id: {
+            '_id': '$_id',
+            'name': '$name',
+            'email': '$email',
+            'phone': '$phone',
+            'pid': '$properties._id',
+            'pname': '$properties.name', 
+            'paddress':'$properties.address', 
+            'pcity':'$properties.city',
+            'pstate': '$properties.state',
+            'pzip': '$properties.zip',
+            'pcalendar': '$properties.calendar',
+            'pcleaner': '$properties.cleaner'
+        },
+        cleanings: {
+            $push: '$properties.cleanings'
+        }
+    }
+}
+
+var projectProperties = {
+    $project: {
+        _id: "$_id._id",
+        name: '$_id.name',
+        email: '$_id.email',
+        phone: '$_id.phone',
+        property: {
+          _id: '$_id.pid',
+          name: '$_id.pname', 
+          address:'$_id.paddress', 
+          city:'$_id.pcity',
+          state: '$_id.pstate',
+          zip: '$_id.pzip',
+          calendar: '$_id.pcalendar',
+          cleaner: '$_id.pcleaner',
+          cleanings: '$cleanings'
+        }
+    }
+};
+
+var groupByCleaner = {
+    $group: {
+        _id: {
+            _id: '$_id',
+            name: '$name',
+            email: '$email',
+            phone: '$phone'
+        },
+        properties: {
+            $push: '$property'
+        }
+    }
+};
+
+var projectCleaners = {
+    $project: {
+        _id: "$_id._id",
+        name: '$_id.name',
+        email: '$_id.email',
+        phone: '$_id.phone',
+        properties: '$properties'
+    }
+};
+
+var sortByStart = {
+    $sort: {
+        'properties.cleanings.start': 1
+    }
+};
+
 function getcleanercleanings (req, res) {
     let id = req.swagger.params.id.value;
 
     let match = { "$match": {}};
-    let dates = {};
-    match["$match"].cleaner = ObjectId(id);
+    let dates = {'$match': {}};
+    match["$match"]._id = ObjectId(id);
+
+    let pipeline = [];
+    pipeline.push(lookupProperties, unwindProperties, lookupCleanings, unwindCleanings);
 
     if (req.swagger.params.start.value !== undefined)
-        dates.$gte = req.swagger.params.start.value;
+        dates['$match']['properties.cleanings.start'] = {$gte: req.swagger.params.start.value};
     if (req.swagger.params.end.value !== undefined)
-        dates.$lt = req.swagger.params.end.value;
-    if (!isEmpty(dates)) 
-        match["$match"].start = dates;
+        dates['$match']['properties.cleanings.end'] = {$lt: req.swagger.params.end.value};
+    if (!isEmpty(dates['$match'])) 
+        pipeline.push(dates);
+
+    pipeline.push(groupByProperties, projectProperties, groupByCleaner, projectCleaners, sortByStart, match);
     
-    Cleaning.aggregate([match,
-        {
-            '$sort': {
-                'start': 1
-            }
-        }
-    ], function (err, cleanings) {
+    Cleaners.aggregate(pipeline, function (err, cleaners) {
         if (err) {
             res.status(404).json({
                 success: false,
                 message: `Error encountered while trying to find cleanings assigned to Cleaner id: ${id}!`
             });
-        } else if (cleanings == []){
+        } else if (cleaners == []){
             res.status(200).json({
                 success: true,
                 message: `No cleanings for Cleaner id: ${id} within the date range specified.`,
-                cleanings: []
+                cleaners: []
             });
         } else {
+            let cleaner = cleaners[0];
             res.status(200).json({
                 success: true,
-                size: cleanings.length,
-                cleanings: cleanings
+                size: cleaners.length,
+                _id: cleaner._id,
+                name: cleaner.name,
+                phone: cleaner.phone,
+                email: cleaner.email,
+                properties: cleaner.properties
             });
         }
     });
